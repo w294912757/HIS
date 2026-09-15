@@ -3,6 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
+import ExcelJS from 'exceljs'
+import { spawn } from 'node:child_process'
 
 test('Electron 通过 IPC 使用 SQLite 完成 CRUD', async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'clinic-records-desktop-'))
@@ -21,6 +23,57 @@ test('Electron 通过 IPC 使用 SQLite 完成 CRUD', async () => {
     await expect(page.getByTestId('undo-button')).toHaveCount(0)
     await expect(page.getByTestId('redo-button')).toHaveCount(0)
   } finally {
+    await app.close(); rmSync(dataDir, { recursive: true, force: true })
+  }
+})
+
+test('Electron 主进程 bundle 可以导入并导出 Excel', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'clinic-records-excel-'))
+  const inputPath = join(dataDir, 'input.xlsx')
+  const outputPath = join(dataDir, 'output.xlsx')
+  const workbook = new ExcelJS.Workbook()
+  const sheet = workbook.addWorksheet('病历')
+  sheet.addRow(['日期', '姓名', '性别', '年龄', '诊断', '临床表现', '治疗', '备注', '费用'])
+  sheet.addRow(['2026-09-15', '桌面Excel测试', '女', '28', '导入诊断', '', '导入治疗', '', '120'])
+  await workbook.xlsx.writeFile(inputPath)
+
+  const app = await electron.launch({ args: ['.'], env: { ...process.env, CLINIC_RECORDS_DATA_DIR: dataDir } })
+  try {
+    await app.evaluate(({ dialog }, paths) => {
+      dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [paths.inputPath] })) as typeof dialog.showOpenDialog
+      dialog.showSaveDialog = (async () => ({ canceled: false, filePath: paths.outputPath })) as typeof dialog.showSaveDialog
+    }, { inputPath, outputPath })
+    const page = await app.firstWindow()
+    const preview = await page.evaluate(() => window.clinicApi!.excel.analyze('recommended'))
+    expect(preview?.valid).toBe(1)
+    const result = await page.evaluate((token) => window.clinicApi!.excel.commit(token, 'keep'), preview!.token)
+    expect(result.imported).toBe(1)
+    const exported = await page.evaluate(() => window.clinicApi!.excel.exportRecords({ page: 1, pageSize: 50 }))
+    expect(exported.canceled).toBe(false)
+
+    const exportedWorkbook = new ExcelJS.Workbook()
+    await exportedWorkbook.xlsx.readFile(outputPath)
+    expect(exportedWorkbook.worksheets[0].getRow(2).getCell(2).text).toBe('桌面Excel测试')
+  } finally {
+    await app.close(); rmSync(dataDir, { recursive: true, force: true })
+  }
+})
+
+test('Electron 重复启动不会创建第二个业务实例', async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), 'clinic-records-single-instance-'))
+  const env = { ...process.env, CLINIC_RECORDS_DATA_DIR: dataDir }
+  const app = await electron.launch({ args: ['.'], env })
+  const second = spawn(resolve('node_modules/electron/dist/electron.exe'), ['.'], { cwd: resolve('.'), env })
+  try {
+    await app.firstWindow()
+    const exitCode = await new Promise<number | null>((resolveExit, reject) => {
+      const timeout = setTimeout(() => reject(new Error('第二个 Electron 实例未按预期退出')), 10_000)
+      second.once('exit', (code) => { clearTimeout(timeout); resolveExit(code) })
+    })
+    expect(exitCode).toBe(0)
+    expect(app.windows()).toHaveLength(1)
+  } finally {
+    if (second.exitCode === null) second.kill()
     await app.close(); rmSync(dataDir, { recursive: true, force: true })
   }
 })

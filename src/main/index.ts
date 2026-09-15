@@ -16,7 +16,8 @@ function createWindow(): void {
     height: 900,
     minWidth: 800,
     minHeight: 600,
-    show: false,
+    show: true,
+    backgroundColor: '#f4f7fb',
     autoHideMenuBar: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.mjs'),
@@ -25,7 +26,6 @@ function createWindow(): void {
       sandbox: false
     }
   })
-  mainWindow.once('ready-to-show', () => mainWindow?.show())
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     void shell.openExternal(url)
     return { action: 'deny' }
@@ -89,15 +89,27 @@ function registerIpc(): void {
   ipcMain.handle('app:get-data-path', () => getDataDirectory())
 }
 
-app.whenReady().then(() => {
-  registerIpc()
-  createWindow()
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
-  })
-})
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
 
-app.on('window-all-closed', () => {
-  closeDatabase()
-  if (process.platform !== 'darwin') app.quit()
-})
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow) return
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+  })
+
+  app.whenReady().then(() => {
+    registerIpc()
+    createWindow()
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
+  })
+
+  app.on('window-all-closed', () => {
+    closeDatabase()
+    if (process.platform !== 'darwin') app.quit()
+  })
+}

@@ -56,6 +56,13 @@ npm run package:portable
 ```
 
 项目已为 electron-builder 配置 Electron 国内镜像，执行 portable 打包时无需额外设置环境变量。
+单文件使用 ZIP 解压格式并只保留中英文 Electron 资源；启动解压时会立即显示提示窗口。
+
+正式签名构建需先配置代码签名证书环境变量 `CSC_LINK` 和 `CSC_KEY_PASSWORD`，然后执行：
+
+```powershell
+npm run package:portable:signed
+```
 
 便携版生成到：
 

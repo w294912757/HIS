@@ -96,10 +96,10 @@ test('真实 Excel 可以逐行校验、完整导入并跳过重复', async ({ p
   const chooserPromise = page.waitForEvent('filechooser')
   await page.getByTestId('record-import-button').click()
   const chooser = await chooserPromise
-  await chooser.setFiles(resolve('病历_校对.xlsx'))
+  await chooser.setFiles(resolve('历史病历.xlsx'))
   const dialog = page.getByTestId('import-preview')
   await expect(dialog).toBeVisible({ timeout: 60_000 })
-  await expect(dialog).toContainText('病历_校对.xlsx')
+  await expect(dialog).toContainText('历史病历.xlsx')
   await expect(dialog).toContainText('共 8075 行')
   await expect(dialog.getByTestId('import-row-status')).toBeVisible()
   await dialog.getByText('保留重复', { exact: true }).click()
@@ -117,7 +117,7 @@ test('真实 Excel 可以逐行校验、完整导入并跳过重复', async ({ p
   const secondChooserPromise = page.waitForEvent('filechooser')
   await page.getByTestId('record-import-button').click()
   const secondChooser = await secondChooserPromise
-  await secondChooser.setFiles(resolve('病历_校对.xlsx'))
+  await secondChooser.setFiles(resolve('历史病历.xlsx'))
   await expect(dialog).toBeVisible({ timeout: 60_000 })
   await dialog.getByText('跳过重复', { exact: true }).click()
   await dialog.getByTestId('import-submit').click()
