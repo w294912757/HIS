@@ -13,7 +13,7 @@ test('Electron 通过 IPC 使用 SQLite 完成 CRUD', async () => {
     await page.getByTestId('record-create-button').click()
     const drawer = page.getByRole('dialog', { name: '新增病历' })
     await drawer.getByLabel('姓名').fill('桌面测试')
-    await drawer.getByRole('button', { name: '保存' }).click()
+    await drawer.getByRole('button', { name: '保存', exact: true }).click()
     await expect(page.getByText('桌面测试')).toBeVisible()
     await page.getByTestId('record-row-delete').click()
     await page.getByRole('button', { name: '确认删除' }).click()

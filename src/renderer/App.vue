@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Delete, Download, EditPen, MoreFilled, Plus, Upload, View } from '@element-plus/icons-vue'
 import type { AppSettings, DuplicateAction, DuplicateKey, ImportPreview, MedicalRecord, MedicalRecordInput, OperationLog } from '../shared/types'
@@ -7,6 +7,7 @@ import { clinicApi } from './api'
 
 const loading = ref(false)
 const saving = ref(false)
+const nameInput = ref<{ focus: () => void } | null>(null)
 const drawerVisible = ref(false)
 const detailVisible = ref(false)
 const detailRecord = ref<MedicalRecord | null>(null)
@@ -148,6 +149,14 @@ async function saveRecord(): Promise<void> {
   if (!await persistRecord()) return
   formSnapshot.value = JSON.stringify(form)
   drawerVisible.value = false
+}
+
+async function saveAndContinueCreating(): Promise<void> {
+  if (isEditing.value || !await persistRecord()) return
+  Object.assign(form, emptyForm())
+  formSnapshot.value = JSON.stringify(form)
+  await nextTick()
+  nameInput.value?.focus()
 }
 
 function requestEditorClose(done?: () => void): void {
@@ -362,16 +371,14 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
           <el-option label="其他/未知" value="其他" />
         </el-select>
         <div class="filter-actions">
-          <el-button type="primary" @click="page = 1; loadRecords()">查询</el-button>
-          <el-button @click="resetFilters">重置</el-button>
+          <el-button data-testid="record-query-button" type="primary" @click="page = 1; loadRecords()">查询</el-button>
+          <el-button data-testid="record-reset-button" @click="resetFilters">重置</el-button>
         </div>
       </section>
 
       <section class="table-panel">
         <div class="table-toolbar">
-          <div class="selection-actions">
-            <div class="total-summary">共 <strong>{{ total.toLocaleString() }}</strong> 张病历</div>
-          </div>
+          <div class="total-summary">共 <strong>{{ total.toLocaleString() }}</strong> 张病历</div>
           <div class="toolbar-actions">
             <el-button data-testid="record-create-button" type="primary" :icon="Plus" title="新增病历 (Ctrl+N)" @click="openCreate">新增病历</el-button>
           </div>
@@ -408,7 +415,7 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
       <el-form label-position="top" @submit.prevent="saveRecord">
         <div class="form-grid editor-form-grid">
           <el-form-item label="日期" required><el-date-picker v-model="form.visitDate" type="date" value-format="YYYY-MM-DD" style="width: 100%" /></el-form-item>
-          <el-form-item label="姓名" required><el-input v-model="form.name" maxlength="100" show-word-limit /></el-form-item>
+          <el-form-item label="姓名" required><el-input ref="nameInput" v-model="form.name" maxlength="100" show-word-limit /></el-form-item>
           <el-form-item label="性别"><el-select v-model="form.gender" clearable style="width: 100%"><el-option label="男" value="男" /><el-option label="女" value="女" /><el-option label="其他/未知" value="其他" /></el-select></el-form-item>
           <el-form-item label="年龄"><el-input v-model="form.ageRaw" placeholder="保留原始表达，例如 2岁10个月" /></el-form-item>
           <el-form-item label="诊断"><el-input v-model="form.diagnosis" /></el-form-item>
@@ -417,7 +424,11 @@ onUnmounted(() => window.removeEventListener('keydown', handleKeydown))
           <el-form-item label="治疗"><el-input v-model="form.treatment" type="textarea" :rows="3" /></el-form-item>
           <el-form-item class="form-span-full" label="备注"><el-input v-model="form.remark" type="textarea" :rows="2" /></el-form-item>
         </div>
-        <div class="drawer-footer"><el-button @click="requestEditorClose()">取消</el-button><el-button type="primary" :loading="saving" @click="saveRecord">保存</el-button></div>
+        <div class="drawer-footer">
+          <el-button @click="requestEditorClose()">取消</el-button>
+          <el-button type="primary" :loading="saving" @click="saveRecord">保存</el-button>
+          <el-button v-if="!isEditing" data-testid="record-save-continue-button" type="primary" plain :loading="saving" @click="saveAndContinueCreating">保存并继续新建</el-button>
+        </div>
       </el-form>
     </el-drawer>
 

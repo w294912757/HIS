@@ -28,6 +28,9 @@
     "appId": "com.clinic.records",
     "productName": "诊所病历",
     "asar": true,
+    "electronDownload": {
+      "mirror": "https://npmmirror.com/mirrors/electron/"
+    },
     "files": [
       "out/**/*",
       "package.json"

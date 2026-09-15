@@ -55,6 +55,8 @@ npm run build
 npm run package:portable
 ```
 
+项目已为 electron-builder 配置 Electron 国内镜像，执行 portable 打包时无需额外设置环境变量。
+
 便携版生成到：
 
 ```text

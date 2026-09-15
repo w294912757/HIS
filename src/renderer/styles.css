@@ -12,18 +12,19 @@ html, body, #app { margin: 0; min-width: 0; width: 100%; height: 100%; overflow:
 button, input, textarea { font: inherit; }
 
 .app-shell { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
-.topbar { flex: 0 0 60px; height: 60px; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; background: #fff; border-bottom: 1px solid #e7ecf3; }
-.brand-block, .topbar-actions, .filter-actions, .table-toolbar, .table-footer, .drawer-footer, .toolbar-actions, .operation-toolbar, .selection-actions { display: flex; align-items: center; }
+.topbar { flex: 0 0 60px; height: 60px; display: flex; align-items: center; justify-content: space-between; padding: 0 16px; background: #fff; border-bottom: 1px solid #e7ecf3; }
+.brand-block, .topbar-actions, .filter-actions, .table-toolbar, .table-footer, .drawer-footer, .toolbar-actions, .operation-toolbar { display: flex; align-items: center; }
 .brand-block { gap: 12px; }
 .brand-mark { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; color: #fff; background: #1677ff; font-weight: 700; font-size: 20px; }
 .brand-block h1 { margin: 0; font-size: 18px; line-height: 1.2; }
 .brand-block p { margin: 3px 0 0; color: #8b97a9; font-size: 12px; }
 .topbar-actions { gap: 8px; }
 .toolbar-actions, .operation-toolbar { gap: 8px; }
-.selection-actions { gap: 12px; }
 .content { display: flex; flex: 1; flex-direction: column; min-height: 0; padding: 10px 16px 12px; }
 .filter-panel { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(120px, 140px) minmax(120px, 140px) minmax(90px, 110px) auto; align-items: center; gap: 10px; padding: 10px; background: #fff; border: 1px solid #e7ecf3; border-radius: 8px; }
+.filter-panel > .el-date-editor, .filter-panel > .el-select { width: 100%; min-width: 0; }
 .filter-actions { gap: 4px; }
+.filter-actions .el-button + .el-button { margin-left: 0; }
 .table-panel { display: grid; flex: 1; grid-template-rows: 46px minmax(0, 1fr) minmax(46px, auto); min-height: 0; margin-top: 10px; padding: 0 10px 8px; background: #fff; border: 1px solid #e7ecf3; border-radius: 8px; }
 .table-toolbar { justify-content: space-between; height: 46px; }
 .total-summary { color: #526074; font-size: 13px; }
