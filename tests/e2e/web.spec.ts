@@ -1,0 +1,334 @@
+import { expect, test } from '@playwright/test'
+import ExcelJS from 'exceljs'
+import { resolve } from 'node:path'
+
+async function rpc<T>(request: import('@playwright/test').APIRequestContext, method: string, args: Record<string, unknown> = {}): Promise<T> {
+  const response = await request.post('/__clinic_api', { data: { method, args } })
+  const body = await response.json() as { ok: boolean; data: T; error?: string }
+  expect(body.ok, body.error).toBe(true)
+  return body.data
+}
+
+test.beforeEach(async ({ page }) => {
+  await page.request.post('/__clinic_api', { data: { method: 'test:reset' } })
+  await page.goto('/')
+})
+
+test('无头浏览器完成新增、搜索、编辑和删除', async ({ page }) => {
+  await expect(page.getByTestId('record-table')).toBeVisible()
+  await page.getByTestId('record-create-button').click()
+  const drawer = page.getByRole('dialog', { name: '新增病历' })
+  await drawer.getByLabel('姓名').fill('测试患者')
+  await drawer.getByLabel('年龄').fill('32')
+  await drawer.getByLabel('诊断').fill('测试诊断')
+  await drawer.getByRole('button', { name: '保存' }).click()
+  await expect(page.getByText('测试患者')).toBeVisible()
+  await page.getByTestId('record-table').getByText('测试患者').click()
+  const detail = page.getByRole('dialog', { name: '病历详情' })
+  await expect(detail).toContainText('测试诊断')
+  await detail.getByRole('button', { name: '关闭', exact: true }).click()
+  await page.getByTestId('record-search-input').fill('测试患者')
+  await page.getByTestId('record-search-input').press('Enter')
+  await page.getByTestId('record-edit-button').click()
+  const editDrawer = page.getByRole('dialog', { name: '编辑病历' })
+  await editDrawer.getByLabel('诊断').fill('已更新诊断')
+  await editDrawer.getByRole('button', { name: '保存' }).click()
+  await expect(page.getByText('已更新诊断')).toBeVisible()
+  await page.getByTestId('record-row-delete').click()
+  await expect(page.getByRole('dialog', { name: '删除确认' })).toBeVisible()
+  await page.getByRole('button', { name: '确认删除' }).click()
+  await expect(page.getByTestId('record-table').getByText('测试患者')).toHaveCount(0)
+})
+
+test('删除后不显示撤销重做入口且快捷键不会恢复记录', async ({ page }) => {
+  await page.keyboard.press('Control+N')
+  const drawer = page.getByRole('dialog', { name: '新增病历' })
+  await drawer.getByLabel('姓名').fill('删除测试')
+  await drawer.getByRole('button', { name: '保存' }).click()
+  await page.getByTestId('record-row-delete').click()
+  await page.getByRole('button', { name: '确认删除' }).click()
+  await expect(page.getByText('删除测试')).toHaveCount(0)
+  await expect(page.getByTestId('undo-button')).toHaveCount(0)
+  await expect(page.getByTestId('redo-button')).toHaveCount(0)
+  await page.keyboard.press('Control+Z')
+  await expect(page.getByText('删除测试')).toHaveCount(0)
+})
+
+test('日期选择器使用中文', async ({ page }) => {
+  await page.getByPlaceholder('开始日期').click()
+  const panel = page.locator('.el-picker-panel:visible')
+  await expect(panel).toBeVisible()
+  await expect(panel.locator('.el-date-table th')).toHaveText(['日', '一', '二', '三', '四', '五', '六'])
+})
+
+test('单击病历行打开加宽明细且点击遮罩不关闭', async ({ page, request }) => {
+  const input = { visitDate: '2026-09-15', name: '明细交互患者', gender: '女', ageRaw: '35', diagnosis: '明细交互验证', clinicalManifestation: null, treatment: null, remark: null, feeRaw: '100' }
+  await rpc(request, 'records:create', { input })
+  await page.reload()
+  await page.getByTestId('record-table').getByText('明细交互患者').click()
+  const detail = page.getByRole('dialog', { name: '病历详情' })
+  await expect(detail).toBeVisible()
+  const box = await detail.boundingBox()
+  expect(box?.width).toBeGreaterThanOrEqual(700)
+  await page.mouse.click(10, 100)
+  await expect(detail).toBeVisible()
+  await detail.getByRole('button', { name: '关闭', exact: true }).click()
+})
+
+test('真实 Excel 可以逐行校验、完整导入并跳过重复', async ({ page }) => {
+  test.setTimeout(150_000)
+  const chooserPromise = page.waitForEvent('filechooser')
+  await page.getByTestId('record-import-button').click()
+  const chooser = await chooserPromise
+  await chooser.setFiles(resolve('病历_校对.xlsx'))
+  const dialog = page.getByTestId('import-preview')
+  await expect(dialog).toBeVisible({ timeout: 60_000 })
+  await expect(dialog).toContainText('病历_校对.xlsx')
+  await expect(dialog).toContainText('共 8075 行')
+  await expect(dialog.getByTestId('import-row-status')).toBeVisible()
+  await dialog.getByText('保留重复', { exact: true }).click()
+  await dialog.getByTestId('import-submit').click()
+  await expect(dialog).toBeHidden({ timeout: 90_000 })
+  const viewport = await page.evaluate(() => ({ scrollHeight: document.documentElement.scrollHeight, clientHeight: document.documentElement.clientHeight }))
+  expect(viewport.scrollHeight).toBe(viewport.clientHeight)
+  const recordTable = page.getByTestId('record-table')
+  await expect(recordTable.locator('.el-scrollbar__bar.is-vertical')).toBeVisible()
+  await expect(recordTable.locator('.el-scrollbar__bar.is-horizontal')).toBeVisible()
+  const importedResponse = await page.request.post('/__clinic_api', { data: { method: 'records:list', args: { query: { page: 1, pageSize: 1 } } } })
+  const imported = await importedResponse.json() as { data: { total: number } }
+  expect(imported.data.total).toBe(8075)
+
+  const secondChooserPromise = page.waitForEvent('filechooser')
+  await page.getByTestId('record-import-button').click()
+  const secondChooser = await secondChooserPromise
+  await secondChooser.setFiles(resolve('病历_校对.xlsx'))
+  await expect(dialog).toBeVisible({ timeout: 60_000 })
+  await dialog.getByText('跳过重复', { exact: true }).click()
+  await dialog.getByTestId('import-submit').click()
+  await expect(dialog).toBeHidden({ timeout: 90_000 })
+  const duplicateResponse = await page.request.post('/__clinic_api', { data: { method: 'records:list', args: { query: { page: 1, pageSize: 1 } } } })
+  const afterDuplicates = await duplicateResponse.json() as { data: { total: number } }
+  expect(afterDuplicates.data.total).toBe(8075)
+})
+
+test('导出的 Excel 保持九列表头和原始文本', async ({ page }, testInfo) => {
+  await page.getByTestId('record-create-button').click()
+  const drawer = page.getByRole('dialog', { name: '新增病历' })
+  await drawer.getByLabel('姓名').fill('导出患者')
+  await drawer.getByLabel('年龄').fill('2岁10个月')
+  await drawer.getByLabel('费用').fill('100-80')
+  await drawer.getByRole('button', { name: '保存' }).click()
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByTestId('record-export-button').click()
+  const download = await downloadPromise
+  const output = testInfo.outputPath('records.xlsx'); await download.saveAs(output)
+  const workbook = new ExcelJS.Workbook(); await workbook.xlsx.readFile(output)
+  const sheet = workbook.worksheets[0]
+  expect(sheet.getRow(1).values).toEqual([undefined, '日期', '姓名', '性别', '年龄', '诊断', '临床表现', '治疗', '备注', '费用'])
+  expect(sheet.getRow(2).getCell(2).text).toBe('导出患者')
+  expect(sheet.getRow(2).getCell(4).text).toBe('2岁10个月')
+  expect(sheet.getRow(2).getCell(9).text).toBe('100-80')
+})
+
+test('1024 x 768 下页面无水平溢出', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 })
+  const dimensions = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth }))
+  expect(dimensions.scrollWidth).toBe(dimensions.clientWidth)
+  await expect(page.getByTestId('record-create-button')).toBeVisible()
+  await expect(page.getByTestId('record-table')).toBeVisible()
+  const topbar = await page.locator('.topbar').boundingBox()
+  expect(topbar?.height).toBeLessThanOrEqual(62)
+  const controls = await Promise.all([
+    page.getByTestId('record-search-input').boundingBox(),
+    page.getByPlaceholder('开始日期').boundingBox(),
+    page.getByPlaceholder('结束日期').boundingBox(),
+    page.getByTestId('gender-filter').boundingBox(),
+    page.getByRole('button', { name: '查询' }).boundingBox()
+  ])
+  const centers = controls.map((box) => (box?.y || 0) + (box?.height || 0) / 2)
+  expect(Math.max(...centers) - Math.min(...centers)).toBeLessThan(3)
+})
+
+test('表格使用紧凑默认列宽并支持拖动调整', async ({ page, request }) => {
+  const input = { visitDate: '2026-09-15', name: '列宽测试', gender: '女', ageRaw: '35', diagnosis: '列宽拖动验证', clinicalManifestation: null, treatment: null, remark: null, feeRaw: '100' }
+  await rpc(request, 'records:create', { input })
+  await page.reload()
+  const table = page.getByTestId('record-table')
+  const headers = table.locator('.el-table__header-wrapper th')
+  await expect(headers.nth(0)).toHaveCSS('width', '106px')
+  await expect(headers.nth(1)).toHaveCSS('width', '100px')
+  await expect(headers.nth(2)).toHaveCSS('width', '64px')
+  await expect(headers.nth(3)).toHaveCSS('width', '72px')
+
+  const nameHeader = headers.nth(1)
+  const before = await nameHeader.boundingBox()
+  expect(before).not.toBeNull()
+  await page.mouse.move(before!.x + before!.width - 2, before!.y + before!.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(before!.x + before!.width + 38, before!.y + before!.height / 2, { steps: 5 })
+  await page.mouse.up()
+  await expect.poll(async () => (await nameHeader.boundingBox())?.width || 0).toBeGreaterThan(before!.width + 25)
+})
+
+test('取消删除不会修改数据', async ({ page }) => {
+  await page.getByTestId('record-create-button').click()
+  const drawer = page.getByRole('dialog', { name: '新增病历' })
+  await drawer.getByLabel('姓名').fill('保留患者')
+  await drawer.getByRole('button', { name: '保存' }).click()
+  await page.getByTestId('record-row-delete').click()
+  await page.getByRole('button', { name: '取消', exact: true }).click()
+  await expect(page.getByText('保留患者')).toBeVisible()
+})
+
+test('新建和编辑病历关闭前询问是否保存且表单一屏展示', async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1024, height: 768 })
+  await page.getByTestId('record-create-button').click()
+  const drawer = page.getByRole('dialog', { name: '新增病历' })
+  await page.mouse.click(8, 100)
+  await expect(drawer).toBeVisible()
+  await drawer.getByLabel('姓名').fill('尚未保存')
+  const drawerBody = page.locator('.record-editor-drawer .el-drawer__body')
+  const bodySize = await drawerBody.evaluate((element) => ({ scrollHeight: element.scrollHeight, clientHeight: element.clientHeight }))
+  expect(bodySize.scrollHeight).toBeLessThanOrEqual(bodySize.clientHeight + 1)
+  await page.screenshot({ path: testInfo.outputPath('editor-1024x768.png') })
+  await drawer.getByRole('button', { name: '取消', exact: true }).click()
+  const confirm = page.getByRole('dialog', { name: '未保存的内容' })
+  await expect(confirm).toBeVisible()
+  await confirm.getByRole('button', { name: '继续编辑' }).click()
+  await expect(drawer).toBeVisible()
+  await drawer.getByRole('button', { name: '关闭此对话框' }).click()
+  await expect(confirm).toBeVisible()
+  await confirm.getByRole('button', { name: '保存并关闭' }).click()
+  await expect(drawer).toBeHidden()
+  await expect(page.getByText('尚未保存')).toBeVisible()
+
+  await page.getByTestId('record-edit-button').click()
+  const editDrawer = page.getByRole('dialog', { name: '编辑病历' })
+  await editDrawer.getByLabel('诊断').fill('编辑后保存')
+  await editDrawer.getByRole('button', { name: '取消', exact: true }).click()
+  await expect(confirm).toBeVisible()
+  await confirm.getByRole('button', { name: '继续编辑' }).click()
+  await editDrawer.getByRole('button', { name: '关闭此对话框' }).click()
+  await expect(confirm).toBeVisible()
+  await confirm.getByRole('button', { name: '保存并关闭' }).click()
+  await expect(editDrawer).toBeHidden()
+  await expect(page.getByText('编辑后保存')).toBeVisible()
+})
+
+test('显示设置保存后立即生效并持久化', async ({ page }) => {
+  await page.getByRole('button', { name: '更多' }).click()
+  await page.getByText('显示设置', { exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '显示设置' })
+  await dialog.getByText('紧凑', { exact: true }).click()
+  await dialog.getByTestId('page-size-setting').click()
+  await page.getByRole('option', { name: '20 条' }).click()
+  await dialog.getByText('备注', { exact: true }).click()
+  await dialog.getByRole('button', { name: '保存设置' }).click()
+  await expect(page.getByTestId('record-table')).toHaveClass(/compact-table/)
+  await expect(page.getByTestId('record-table').getByRole('columnheader', { name: '备注' })).toHaveCount(0)
+  await page.reload()
+  await expect(page.getByTestId('record-table')).toHaveClass(/compact-table/)
+  await expect(page.locator('.table-footer').getByText('20条/页')).toBeVisible()
+  await expect(page.getByTestId('record-table').getByRole('columnheader', { name: '备注' })).toHaveCount(0)
+})
+
+test('操作记录可查看和导出', async ({ page }) => {
+  await page.getByTestId('record-create-button').click()
+  const drawer = page.getByRole('dialog', { name: '新增病历' })
+  await drawer.getByLabel('姓名').fill('日志患者')
+  await drawer.getByRole('button', { name: '保存' }).click()
+  await page.getByRole('button', { name: '更多' }).click()
+  await page.getByTestId('operation-menu-item').click()
+  const operationDrawer = page.getByRole('dialog', { name: '操作记录' })
+  await expect(operationDrawer).toContainText('新增病历：日志患者')
+  await operationDrawer.locator('.el-table__expand-icon').first().click()
+  await expect(operationDrawer.locator('.operation-detail')).toContainText('日志患者')
+  const downloadPromise = page.waitForEvent('download')
+  await operationDrawer.getByRole('button', { name: '导出记录' }).click()
+  const download = await downloadPromise
+  expect(download.suggestedFilename()).toContain('操作记录')
+})
+
+test('浏览器可下载数据库备份并恢复', async ({ page }, testInfo) => {
+  await page.getByTestId('record-create-button').click()
+  const drawer = page.getByRole('dialog', { name: '新增病历' })
+  await drawer.getByLabel('姓名').fill('备份患者')
+  await drawer.getByRole('button', { name: '保存' }).click()
+  await page.getByRole('button', { name: '更多' }).click()
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByText('备份数据', { exact: true }).click()
+  const download = await downloadPromise
+  const backupPath = testInfo.outputPath('backup.db'); await download.saveAs(backupPath)
+  await page.getByTestId('record-row-delete').click()
+  await page.getByRole('button', { name: '确认删除' }).click()
+  await expect(page.getByText('备份患者')).toHaveCount(0)
+  await page.getByRole('button', { name: '更多' }).click()
+  await page.getByText('恢复备份', { exact: true }).click()
+  const chooserPromise = page.waitForEvent('filechooser')
+  await page.getByRole('button', { name: '选择备份并恢复' }).click()
+  const chooser = await chooserPromise; await chooser.setFiles(backupPath)
+  await expect(page.getByText('备份患者')).toBeVisible()
+})
+
+test('重复病历可以覆盖已有记录', async ({ page, request }, testInfo) => {
+  const input = { visitDate: '2026-09-15', name: '重复患者', gender: '女', ageRaw: '30', diagnosis: '原诊断', clinicalManifestation: null, treatment: '原治疗', remark: null, feeRaw: '100' }
+  await rpc(request, 'records:create', { input })
+  await rpc(request, 'settings:update', { settings: { tableDensity: 'comfortable', fontScale: 100, defaultPageSize: 50, duplicateKey: 'date_name', visibleColumns: ['gender', 'ageRaw', 'diagnosis', 'clinicalManifestation', 'treatment', 'remark', 'feeRaw'] } })
+  await page.reload()
+  const workbook = new ExcelJS.Workbook(); const sheet = workbook.addWorksheet('病例汇总')
+  sheet.addRow(['日期', '姓名', '性别', '年龄', '诊断', '临床表现', '治疗', '备注', '费用'])
+  sheet.addRow(['2026-09-15', '重复患者', '女', '30', '新诊断', null, '新治疗', null, '200'])
+  const file = testInfo.outputPath('duplicate.xlsx'); await workbook.xlsx.writeFile(file)
+  const chooserPromise = page.waitForEvent('filechooser'); await page.getByTestId('record-import-button').click(); const chooser = await chooserPromise; await chooser.setFiles(file)
+  const dialog = page.getByTestId('import-preview'); await expect(dialog).toContainText('重复')
+  await dialog.getByText('覆盖已有', { exact: true }).click()
+  await dialog.getByTestId('import-submit').click()
+  await expect(dialog).toBeHidden()
+  await expect(page.getByText('新诊断')).toBeVisible()
+  const result = await rpc<{ total: number }>(request, 'records:list', { query: { page: 1, pageSize: 50 } })
+  expect(result.total).toBe(1)
+})
+
+test('常用键盘快捷键可完成新建、保存、搜索和刷新', async ({ page, request }) => {
+  await page.keyboard.press('Control+N')
+  const drawer = page.getByRole('dialog', { name: '新增病历' })
+  await drawer.getByLabel('姓名').fill('快捷键患者')
+  await page.keyboard.press('Control+S')
+  await expect(page.getByText('快捷键患者')).toBeVisible()
+  await page.keyboard.press('Control+F')
+  await expect(page.getByTestId('record-search-input')).toBeFocused()
+  const second = { visitDate: '2026-09-14', name: '刷新患者', gender: '男', ageRaw: '20', diagnosis: null, clinicalManifestation: null, treatment: null, remark: null, feeRaw: null }
+  await rpc(request, 'records:create', { input: second })
+  await page.keyboard.press('F5')
+  await expect(page.getByText('刷新患者')).toBeVisible()
+})
+
+test('日期、性别和关键词可以组合筛选', async ({ page, request }) => {
+  const base = { ageRaw: '30', diagnosis: '皮炎复诊', clinicalManifestation: null, treatment: null, remark: null, feeRaw: '200' }
+  await rpc(request, 'records:create', { input: { ...base, visitDate: '2026-09-15', name: '筛选甲', gender: '女' } })
+  await rpc(request, 'records:create', { input: { ...base, visitDate: '2026-08-01', name: '筛选乙', gender: '男' } })
+  await page.reload()
+  await page.getByTestId('record-search-input').fill('皮炎')
+  await page.getByPlaceholder('开始日期').fill('2026-09-01')
+  await page.getByTestId('gender-filter').click()
+  await page.getByRole('option', { name: '女' }).click()
+  await page.getByRole('button', { name: '查询' }).click()
+  await expect(page.getByText('筛选甲')).toBeVisible()
+  await expect(page.getByText('筛选乙')).toHaveCount(0)
+})
+
+test('列表不显示复选框和批量删除入口', async ({ page }) => {
+  await expect(page.getByTestId('record-table').locator('.el-checkbox')).toHaveCount(0)
+  await expect(page.getByTestId('record-delete-button')).toHaveCount(0)
+})
+
+test('缺少必填表头时阻止导入并说明原因', async ({ page }, testInfo) => {
+  const workbook = new ExcelJS.Workbook(); const sheet = workbook.addWorksheet('错误示例')
+  sheet.addRow(['日期', '诊断']); sheet.addRow(['2026-09-15', '测试'])
+  const file = testInfo.outputPath('missing-name.xlsx'); await workbook.xlsx.writeFile(file)
+  const chooserPromise = page.waitForEvent('filechooser')
+  await page.getByTestId('record-import-button').click()
+  const chooser = await chooserPromise; await chooser.setFiles(file)
+  await expect(page.locator('.el-message')).toContainText('缺少必填表头：姓名')
+  await expect(page.getByTestId('import-preview')).toHaveCount(0)
+})
